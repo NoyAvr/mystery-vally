@@ -1,0 +1,742 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jewelry Workshop</title>
+<meta name="description" content="Interactive 3D jewelry workshop. Step 1: studio, workbench and a high-density gold ring.">
+<style>
+  :root {
+    --bg: #0f0d0c;
+    --panel: rgba(22, 19, 17, 0.72);
+    --panel-border: rgba(255, 236, 205, 0.10);
+    --text: #f1ebe2;
+    --muted: #a39a8e;
+    --accent: #e8c46a;
+    --focus: #ffe3a1;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); color: var(--text);
+    font: 14px/1.4 "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  #app { position: fixed; inset: 0; }
+  #app canvas { display: block; width: 100%; height: 100%; touch-action: none; }
+
+  /* Soft studio vignette drawn over the canvas (does not block input). */
+  #vignette { position: fixed; inset: 0; pointer-events: none;
+    background: radial-gradient(ellipse at 50% 45%, transparent 45%, rgba(0,0,0,0.55) 100%); }
+
+  /* ---------- Control panel ---------- */
+  #panel { position: fixed; top: 16px; left: 16px; width: 260px; max-width: calc(100vw - 32px);
+    padding: 16px; border-radius: 14px; background: var(--panel); border: 1px solid var(--panel-border);
+    backdrop-filter: blur(14px) saturate(1.2); -webkit-backdrop-filter: blur(14px) saturate(1.2);
+    box-shadow: 0 10px 40px rgba(0,0,0,0.35); opacity: 0; transform: translateY(-6px);
+    transition: opacity .5s ease, transform .5s ease; }
+  body.ready #panel { opacity: 1; transform: none; }
+  #panel .eyebrow { font-size: 11px; letter-spacing: .14em; text-transform: uppercase; color: var(--accent); }
+  #panel h1 { margin: 2px 0 14px; font-size: 17px; font-weight: 600; letter-spacing: .01em; }
+  #panel h2 { margin: 0 0 8px; font-size: 11px; font-weight: 600; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }
+  #panel section + section { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--panel-border); }
+
+  .swatches { display: grid; gap: 6px; }
+  .swatch { display: flex; align-items: center; gap: 10px; width: 100%; padding: 8px 10px; border-radius: 9px;
+    border: 1px solid transparent; background: rgba(255,255,255,0.04); color: var(--text); font: inherit;
+    text-align: left; cursor: pointer; transition: background .2s, border-color .2s; }
+  .swatch:hover { background: rgba(255,255,255,0.08); }
+  .swatch[aria-pressed="true"] { border-color: rgba(232,196,106,0.55); background: rgba(232,196,106,0.10); }
+  .swatch:focus-visible, .btn:focus-visible, .toggle input:focus-visible + span { outline: 2px solid var(--focus); outline-offset: 2px; }
+  .chip { width: 22px; height: 22px; border-radius: 50%; flex: none;
+    box-shadow: inset 0 -3px 6px rgba(0,0,0,0.35), inset 0 3px 6px rgba(255,255,255,0.45); }
+  .swatch small { display: block; color: var(--muted); font-size: 11px; }
+
+  .row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+  .row + .row { margin-top: 10px; }
+  .toggle { display: flex; align-items: center; gap: 10px; cursor: pointer; user-select: none; }
+  .toggle input { position: absolute; opacity: 0; pointer-events: none; }
+  .toggle span { width: 34px; height: 20px; border-radius: 10px; background: rgba(255,255,255,0.15); position: relative; transition: background .2s; }
+  .toggle span::after { content: ""; position: absolute; top: 3px; left: 3px; width: 14px; height: 14px; border-radius: 50%;
+    background: #fff; transition: transform .2s; }
+  .toggle input:checked + span { background: var(--accent); }
+  .toggle input:checked + span::after { transform: translateX(14px); }
+  .btn { padding: 7px 12px; border-radius: 8px; border: 1px solid var(--panel-border); background: rgba(255,255,255,0.06);
+    color: var(--text); font: inherit; cursor: pointer; }
+  .btn:hover { background: rgba(255,255,255,0.12); }
+  .stats { margin-top: 12px; font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .stats b { color: var(--text); font-weight: 500; }
+
+  #hint { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); padding: 7px 14px; border-radius: 999px;
+    background: rgba(0,0,0,0.35); color: var(--muted); font-size: 12px; pointer-events: none; white-space: nowrap;
+    opacity: 0; transition: opacity .6s ease .4s; }
+  body.ready #hint { opacity: 1; }
+
+  /* ---------- Loading / error screen ---------- */
+  #loader { position: fixed; inset: 0; display: grid; place-items: center; background: var(--bg); z-index: 10;
+    transition: opacity .7s ease; padding: 16px; text-align: center; }
+  body.ready #loader { opacity: 0; pointer-events: none; }
+  #loader .big { color: var(--muted); letter-spacing: .08em; }
+  #loader-err { max-width: 520px; margin-top: 10px; color: #f0a58a; }
+  #loader-err code { color: var(--text); }
+
+  @media (max-width: 560px) {
+    #panel { top: auto; bottom: 16px; left: 16px; right: 16px; width: auto; padding: 12px; }
+    #panel h1 { margin-bottom: 10px; }
+    .swatches { grid-template-columns: repeat(3, 1fr); }
+    .swatch { flex-direction: column; gap: 4px; text-align: center; padding: 8px 4px; font-size: 12px; }
+    .swatch small { display: none; }
+    #hint { top: 16px; bottom: auto; }
+    .stats { display: none; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    #panel, #hint, #loader { transition: none; }
+  }
+</style>
+</head>
+<body>
+<div id="app"></div>
+<div id="vignette"></div>
+
+<aside id="panel" aria-label="Workshop controls">
+  <div class="eyebrow">Jewelry Workshop</div>
+  <h1>Step 1 · The Bench</h1>
+  <section>
+    <h2>Metal</h2>
+    <div class="swatches" id="metal-swatches" role="group" aria-label="Metal preset"></div>
+  </section>
+  <section>
+    <div class="row">
+      <label class="toggle"><input type="checkbox" id="idle-toggle" checked><span></span>Idle rotation</label>
+    </div>
+    <div class="row">
+      <button class="btn" id="reset-shape" type="button">Reset shape</button>
+      <button class="btn" id="reset-view" type="button">Reset view</button>
+    </div>
+    <div class="stats" id="stats"></div>
+  </section>
+</aside>
+
+<div id="hint">Drag to orbit · Scroll to zoom</div>
+
+<div id="loader">
+  <div>
+    <div class="big">Warming up the workshop…</div>
+    <div id="loader-err"></div>
+  </div>
+</div>
+
+<!-- ============================ LIBRARIES ============================
+     Three.js r160 (+ OrbitControls) is loaded from the first source that
+     answers: unpkg → jsDelivr → the bundled ./vendor copy (the vendor copy
+     only works when the page is served over http, e.g. `npx serve`).
+     Any failure is reported on the loading screen with its actual cause. -->
+<script>
+(function () {
+  const errEl = document.getElementById('loader-err');
+  const statusEl = document.querySelector('#loader .big');
+  const esc = (s) => String(s).replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+  const fail = (html) => { if (!window.__workshopReady) errEl.innerHTML = html; };
+  const status = (t) => { if (!window.__workshopReady) statusEl.textContent = t; };
+
+  window.addEventListener('error', (e) => {
+    if (e.target && e.target !== window) return;
+    fail('The workshop hit a script error:<br><b>' + esc(e.message || 'unknown error') + '</b>');
+  }, true);
+  window.addEventListener('unhandledrejection', (e) => {
+    fail('The workshop could not start:<br><b>' + esc((e.reason && e.reason.message) || e.reason) + '</b>');
+  });
+
+  const probe = document.createElement('canvas');
+  if (!(probe.getContext('webgl2') || probe.getContext('webgl'))) {
+    fail('WebGL is turned off or unavailable in this browser. Enable hardware acceleration (or try another browser) and reload.');
+    return;
+  }
+
+  const THREE_SOURCES = [
+    { name: 'unpkg', base: 'https://unpkg.com/three@0.160.0' },
+    { name: 'jsDelivr', base: 'https://cdn.jsdelivr.net/npm/three@0.160.0' },
+    { name: 'local vendor/ folder', base: 'vendor/three' },
+  ];
+
+  async function reachable(url, timeout) {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), timeout);
+    try { const r = await fetch(url, { signal: ctrl.signal }); return r.ok; }
+    catch (_) { return false; }
+    finally { clearTimeout(timer); }
+  }
+
+  (async () => {
+    let three = null;
+    for (const src of THREE_SOURCES) {
+      status('Warming up the workshop… (' + src.name + ')');
+      if (await reachable(src.base + '/examples/jsm/controls/OrbitControls.js', 8000)) { three = src; break; }
+    }
+    if (!three) {
+      const local = location.protocol === 'file:'
+        ? ' The bundled copy in <code>vendor/</code> can\'t load from a file:// page; serve the folder instead (for example <code>npx serve</code>).'
+        : '';
+      fail('Could not load Three.js from unpkg, jsDelivr or the local <code>vendor/</code> folder. ' +
+        'A network filter or ad blocker may be blocking these CDNs.' + local);
+      return;
+    }
+    status('Warming up the workshop…');
+
+    const base = new URL(three.base, location.href).href;
+    const map = document.createElement('script');
+    map.type = 'importmap';
+    map.textContent = JSON.stringify({ imports: {
+      'three': base + '/build/three.module.js',
+      'three/addons/': base + '/examples/jsm/',
+    } });
+    document.head.appendChild(map);
+
+    const app = document.createElement('script');
+    app.type = 'module';
+    app.textContent = document.getElementById('workshop-src').textContent;
+    document.body.appendChild(app);
+
+    setTimeout(() => fail('The workshop is taking too long to start (Three.js came from ' + three.name + '). Try reloading.'), 25000);
+  })();
+})();
+</script>
+
+<!-- ============================ WORKSHOP ============================
+     Kept as text and started by the loader above, once Three.js is reachable. -->
+<script type="text/plain" id="workshop-src">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+/* =====================================================================
+   CONFIG — every tunable number lives here.
+   ===================================================================== */
+const CONFIG = {
+  maxPixelRatio: 2,                  // cap DPR so 3x phones don't melt the GPU
+  camera: { fov: 35, near: 0.1, far: 100, position: new THREE.Vector3(4.2, 3.1, 5.8) },
+  ring: {
+    radius: 1.0,                     // centre of tube → centre of ring
+    tube: 0.18,                      // band thickness (radius of the cross-section)
+    radialSegments: 64,              // around the tube cross-section
+    tubularSegments: 128,            // around the ring
+    height: 1.5,                     // resting height of the ring centre above the bench
+  },
+  bench: { width: 10, depth: 6, thickness: 0.35 },
+  idle: {
+    spinSpeed: 0.35,                 // rad/s around Y
+    bobAmplitude: 0.06,              // world units
+    bobSpeed: 1.1,                   // rad/s of the bob phase
+    resumeDelay: 2.5,                // seconds after the last interaction before idling resumes
+    blendRate: 2.5,                  // how quickly idle motion fades in/out (higher = snappier)
+  },
+  materialTransition: 0.45,          // seconds to cross-fade between metal presets
+};
+
+/* =====================================================================
+   METAL PRESETS — MeshPhysicalMaterial parameters per alloy.
+   ===================================================================== */
+const METAL_PRESETS = {
+  yellowGold: { label: 'Yellow Gold', note: '18K · 75% Au', color: 0xFFD700, metalness: 0.95, roughness: 0.15, clearcoat: 0.3, clearcoatRoughness: 0.08 },
+  whiteGold:  { label: 'White Gold',  note: '18K · rhodium', color: 0xE8E6E1, metalness: 0.95, roughness: 0.12, clearcoat: 0.35, clearcoatRoughness: 0.06 },
+  roseGold:   { label: 'Rose Gold',   note: '18K · Au/Cu',  color: 0xF2B8A2, metalness: 0.95, roughness: 0.16, clearcoat: 0.3, clearcoatRoughness: 0.08 },
+};
+const DEFAULT_METAL = 'yellowGold';
+
+/* =====================================================================
+   RENDERER / SCENE / CAMERA
+   ===================================================================== */
+function createRenderer(container) {
+  const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, CONFIG.maxPixelRatio));
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  renderer.outputColorSpace = THREE.SRGBColorSpace;
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.05;
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  container.appendChild(renderer.domElement);
+  return renderer;
+}
+
+function createScene() {
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x0f0d0c);
+  scene.fog = new THREE.Fog(0x0f0d0c, 11, 26);   // lets the bench edges melt into the dark studio
+  return scene;
+}
+
+function createCamera() {
+  const { fov, near, far } = CONFIG.camera;
+  const camera = new THREE.PerspectiveCamera(fov, window.innerWidth / window.innerHeight, near, far);
+  camera.position.copy(defaultCameraPosition(camera.aspect));
+  return camera;
+}
+
+/** Default viewpoint, pulled back on narrow (portrait) screens so the whole ring fits. */
+function defaultCameraPosition(aspect) {
+  const pullBack = THREE.MathUtils.clamp(0.95 / aspect, 1, 1.9);
+  const focus = new THREE.Vector3(0, CONFIG.ring.height, 0);
+  return CONFIG.camera.position.clone().sub(focus).multiplyScalar(pullBack).add(focus);
+}
+
+/* =====================================================================
+   STUDIO ENVIRONMENT — a tiny HDR "photo studio" of emissive softboxes,
+   prefiltered with PMREM. Metals are almost entirely reflection, so this
+   is what actually makes the gold read as gold. No external HDRI needed.
+   ===================================================================== */
+function createStudioEnvironment(renderer) {
+  const env = new THREE.Scene();
+  env.background = new THREE.Color(0x050404);
+
+  const softbox = (w, h, rgb, intensity, pos) => {
+    const mat = new THREE.MeshBasicMaterial({ color: new THREE.Color(...rgb).multiplyScalar(intensity), side: THREE.DoubleSide });
+    const mesh = new THREE.Mesh(new THREE.PlaneGeometry(w, h), mat);
+    mesh.position.copy(pos);
+    mesh.lookAt(0, 0, 0);
+    env.add(mesh);
+  };
+  softbox(8, 3, [1.0, 0.92, 0.82], 5.0, new THREE.Vector3(0, 9, 1));      // big overhead strip
+  softbox(3, 5, [1.0, 0.86, 0.70], 7.0, new THREE.Vector3(7, 3, 5));      // warm key box
+  softbox(3, 4, [0.72, 0.82, 1.0], 2.5, new THREE.Vector3(-8, 2, 3));     // cool fill box
+  softbox(6, 1, [1.0, 1.0, 1.0], 6.0, new THREE.Vector3(0, 3, -9));       // rim strip behind
+  softbox(20, 20, [0.10, 0.08, 0.07], 1.0, new THREE.Vector3(0, -4, 0));  // warm dark floor bounce
+
+  const pmrem = new THREE.PMREMGenerator(renderer);
+  const target = pmrem.fromScene(env, 0.035);
+  pmrem.dispose();
+  env.traverse((o) => { if (o.isMesh) { o.geometry.dispose(); o.material.dispose(); } });
+  return target.texture;
+}
+
+/* =====================================================================
+   STUDIO LIGHTING — warm key (shadow caster), cool fill, rim, ambient.
+   ===================================================================== */
+function createLights(scene, focus) {
+  const lights = new THREE.Group();
+  lights.name = 'StudioLights';
+
+  // Warm key: the main light, and the only shadow caster (one clean shadow like a real softbox).
+  const key = new THREE.DirectionalLight(0xffe0bd, 2.6);
+  key.position.set(4, 7.5, 3.5);
+  key.target.position.copy(focus);
+  key.castShadow = true;
+  key.shadow.mapSize.set(2048, 2048);
+  const s = key.shadow.camera;
+  s.left = -3; s.right = 3; s.top = 3; s.bottom = -3; s.near = 2; s.far = 20;
+  key.shadow.bias = -0.0003;
+  key.shadow.normalBias = 0.02;
+  key.shadow.radius = 4;
+
+  // Cool fill: lifts the shadow side and gives the metal a cold/warm contrast.
+  const fill = new THREE.DirectionalLight(0xbcd2ff, 0.7);
+  fill.position.set(-6, 3, 2.5);
+  fill.target.position.copy(focus);
+
+  // Rim: from behind, outlines the silhouette against the dark background.
+  const rim = new THREE.DirectionalLight(0xffffff, 2.0);
+  rim.position.set(-1.5, 4, -6);
+  rim.target.position.copy(focus);
+
+  // Soft ambient so nothing crushes to pure black.
+  const ambient = new THREE.AmbientLight(0xfff1e0, 0.25);
+
+  lights.add(key, key.target, fill, fill.target, rim, rim.target, ambient);
+  scene.add(lights);
+  return { key, fill, rim, ambient };
+}
+
+/* =====================================================================
+   WORKBENCH — polished dark marble slab (procedural canvas textures).
+   ===================================================================== */
+function createMarbleTextures(renderer, width = 1280, height = 768) {
+  // Small, dependency-free value noise + fBm.
+  const hash = (x, y) => {
+    let n = (Math.imul(x, 374761393) + Math.imul(y, 668265263)) | 0;
+    n = Math.imul(n ^ (n >>> 13), 1274126177);
+    n ^= n >>> 16;
+    return (n >>> 0) / 4294967296;
+  };
+  const noise = (x, y) => {
+    const xi = Math.floor(x), yi = Math.floor(y);
+    const xf = x - xi, yf = y - yi;
+    const u = xf * xf * (3 - 2 * xf), v = yf * yf * (3 - 2 * yf);
+    const a = hash(xi, yi), b = hash(xi + 1, yi), c = hash(xi, yi + 1), d = hash(xi + 1, yi + 1);
+    return a + (b - a) * u + (c - a) * v + (a - b - c + d) * u * v;
+  };
+  const fbm = (x, y, octaves) => {
+    let sum = 0, amp = 0.5, freq = 1;
+    for (let i = 0; i < octaves; i++) { sum += amp * noise(x * freq, y * freq); freq *= 2.03; amp *= 0.5; }
+    return sum;
+  };
+
+  const colorCanvas = document.createElement('canvas');
+  const roughCanvas = document.createElement('canvas');
+  colorCanvas.width = roughCanvas.width = width;
+  colorCanvas.height = roughCanvas.height = height;
+  const cctx = colorCanvas.getContext('2d');
+  const rctx = roughCanvas.getContext('2d');
+  const colorImg = cctx.createImageData(width, height);
+  const roughImg = rctx.createImageData(width, height);
+
+  const vein = [206, 196, 178];      // warm ivory veining (Nero Marquina style)
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const nx = (x / height) * 4, ny = (y / height) * 4;
+      const warp = fbm(nx * 0.8, ny * 0.8, 5);
+      const main = Math.abs(Math.sin((nx * 0.9 + ny * 0.45) * 1.4 + warp * 3.2));
+      const fine = Math.abs(Math.sin((ny * 1.3 - nx * 0.5) * 2.6 + fbm(nx * 1.7 + 5.2, ny * 1.7, 4) * 4.0));
+      const mottle = fbm(nx * 3.0 + 11.0, ny * 3.0, 3);
+
+      const v = Math.min(1,
+        Math.pow(1 - main, 22) * 0.55 +   // primary veins
+        Math.pow(1 - fine, 70) * 0.25 +   // hairline veins
+        Math.pow(1 - main, 4) * 0.08);    // soft haze around veins
+
+      const r = 17 + mottle * 14, g = 15 + mottle * 12, b = 14 + mottle * 11;
+      const i = (y * width + x) * 4;
+      colorImg.data[i]     = r + (vein[0] - r) * v;
+      colorImg.data[i + 1] = g + (vein[1] - g) * v;
+      colorImg.data[i + 2] = b + (vein[2] - b) * v;
+      colorImg.data[i + 3] = 255;
+
+      // Roughness (read from the G channel): polished stone, slightly duller along the veins.
+      const rough = 135 + v * 50 + mottle * 30;
+      roughImg.data[i] = roughImg.data[i + 1] = roughImg.data[i + 2] = rough;
+      roughImg.data[i + 3] = 255;
+    }
+  }
+  cctx.putImageData(colorImg, 0, 0);
+  rctx.putImageData(roughImg, 0, 0);
+
+  const anisotropy = renderer.capabilities.getMaxAnisotropy();
+  const map = new THREE.CanvasTexture(colorCanvas);
+  map.colorSpace = THREE.SRGBColorSpace;
+  map.anisotropy = anisotropy;
+  const roughnessMap = new THREE.CanvasTexture(roughCanvas);
+  roughnessMap.anisotropy = anisotropy;
+  return { map, roughnessMap };
+}
+
+function createWorkbench(renderer) {
+  const { width, depth, thickness } = CONFIG.bench;
+  const { map, roughnessMap } = createMarbleTextures(renderer);
+  const material = new THREE.MeshStandardMaterial({
+    map, roughnessMap,
+    roughness: 1.0,              // scaled by roughnessMap
+    metalness: 0.0,
+    envMapIntensity: 0.3,
+  });
+  const bench = new THREE.Mesh(new THREE.BoxGeometry(width, thickness, depth), material);
+  bench.name = 'Workbench';
+  bench.position.y = -thickness / 2;   // top surface sits exactly at y = 0
+  bench.receiveShadow = true;
+  return bench;
+}
+
+/* =====================================================================
+   RING — high-density torus, prepared for vertex displacement & slicing.
+
+   Data stored on ring.userData (see also resetRingGeometry):
+     initialPositions  Float32Array  pristine copy of position.array
+     initialNormals    Float32Array  pristine copy of normal.array
+     heat              Float32Array  one scalar per vertex (0 = cold), for the melting step
+     vertexCount       number
+
+   Notes for later steps:
+     • TorusGeometry is indexed but duplicates the seam vertices (u = 0/2π and
+       v = 0/2π). Drive displacement from vertex *position* (not index) so the
+       duplicates move together and the seam never tears.
+     • After editing positions: position.needsUpdate = true,
+       geometry.computeVertexNormals(), and geometry.computeBoundingSphere()
+       (raycasting culls against the bounding sphere).
+   ===================================================================== */
+function createRingMaterial(presetKey) {
+  const p = METAL_PRESETS[presetKey];
+  return new THREE.MeshPhysicalMaterial({
+    color: p.color,
+    metalness: p.metalness,
+    roughness: p.roughness,
+    clearcoat: p.clearcoat,
+    clearcoatRoughness: p.clearcoatRoughness,
+    envMapIntensity: 1.5,
+  });
+}
+
+function createRing(material) {
+  const { radius, tube, radialSegments, tubularSegments } = CONFIG.ring;
+  const geometry = new THREE.TorusGeometry(radius, tube, radialSegments, tubularSegments);
+
+  // We will rewrite these buffers every frame while heating, so hint the driver.
+  const position = geometry.attributes.position;
+  const normal = geometry.attributes.normal;
+  position.setUsage(THREE.DynamicDrawUsage);
+  normal.setUsage(THREE.DynamicDrawUsage);
+
+  const ring = new THREE.Mesh(geometry, material);
+  ring.name = 'Ring';
+  ring.castShadow = true;
+  ring.receiveShadow = true;
+
+  ring.userData.initialPositions = position.array.slice();
+  ring.userData.initialNormals = normal.array.slice();
+  ring.userData.heat = new Float32Array(position.count);
+  ring.userData.vertexCount = position.count;
+  return ring;
+}
+
+/** Restore the ring to its pristine, cold shape. */
+function resetRingGeometry(ring) {
+  const geo = ring.geometry;
+  geo.attributes.position.array.set(ring.userData.initialPositions);
+  geo.attributes.normal.array.set(ring.userData.initialNormals);
+  geo.attributes.position.needsUpdate = true;
+  geo.attributes.normal.needsUpdate = true;
+  ring.userData.heat.fill(0);
+  geo.computeBoundingBox();
+  geo.computeBoundingSphere();
+}
+
+/* =====================================================================
+   METAL SWITCHER — cross-fades material parameters between presets.
+   ===================================================================== */
+class MetalSwitcher {
+  constructor(material, initialKey) {
+    this.material = material;
+    this.current = initialKey;
+    this.from = null;
+    this.to = null;
+    this.t = 1;
+  }
+  snapshot() {
+    const m = this.material;
+    return { color: m.color.clone(), roughness: m.roughness, metalness: m.metalness,
+             clearcoat: m.clearcoat, clearcoatRoughness: m.clearcoatRoughness };
+  }
+  set(key) {
+    const p = METAL_PRESETS[key];
+    if (!p) return;
+    this.current = key;
+    this.from = this.snapshot();
+    this.to = { color: new THREE.Color(p.color), roughness: p.roughness, metalness: p.metalness,
+                clearcoat: p.clearcoat, clearcoatRoughness: p.clearcoatRoughness };
+    this.t = 0;
+  }
+  update(dt) {
+    if (this.t >= 1) return;
+    this.t = Math.min(1, this.t + dt / CONFIG.materialTransition);
+    const k = this.t * this.t * (3 - 2 * this.t);   // smoothstep
+    const m = this.material, a = this.from, b = this.to;
+    m.color.copy(a.color).lerp(b.color, k);
+    m.roughness = THREE.MathUtils.lerp(a.roughness, b.roughness, k);
+    m.metalness = THREE.MathUtils.lerp(a.metalness, b.metalness, k);
+    m.clearcoat = THREE.MathUtils.lerp(a.clearcoat, b.clearcoat, k);
+    m.clearcoatRoughness = THREE.MathUtils.lerp(a.clearcoatRoughness, b.clearcoatRoughness, k);
+  }
+}
+
+/* =====================================================================
+   CONTROLS — damped orbit, constrained so the camera never dips under
+   the bench or flips over the top.
+   ===================================================================== */
+function createControls(camera, domElement, target) {
+  const controls = new OrbitControls(camera, domElement);
+  controls.target.copy(target);
+  controls.enableDamping = true;
+  controls.dampingFactor = 0.06;
+  controls.rotateSpeed = 0.7;
+  controls.zoomSpeed = 0.8;
+  controls.enablePan = false;               // keep the ring centred; re-enable if a step needs it
+  controls.minDistance = 2.6;
+  controls.maxDistance = 14;
+  controls.minPolarAngle = 0.15;            // not straight down (avoids gimbal-ish flip at the pole)
+  controls.maxPolarAngle = Math.PI / 2 - 0.04;  // never below the bench plane
+  controls.update();
+  return controls;
+}
+
+/* =====================================================================
+   IDLE ANIMATOR — slow spin + float on a pivot. Fades out the moment the
+   user grabs the camera and fades back in after CONFIG.idle.resumeDelay.
+   It moves the *pivot*, never the vertices, so later vertex work is
+   always in the ring's own local space.
+   ===================================================================== */
+class IdleAnimator {
+  constructor(pivot, controls) {
+    this.pivot = pivot;
+    this.baseY = pivot.position.y;
+    this.enabled = true;            // user toggle
+    this.holds = new Set();         // other systems (torch, cutter…) can pause idling: hold('torch') / release('torch')
+    this.interacting = false;
+    this.lastInteraction = -Infinity;
+    this.weight = 1;                // 0..1 blend of idle motion
+    this.phase = 0;
+
+    controls.addEventListener('start', () => { this.interacting = true; });
+    controls.addEventListener('end', () => { this.interacting = false; this.lastInteraction = performance.now() / 1000; });
+  }
+  hold(reason) { this.holds.add(reason); }
+  release(reason) { this.holds.delete(reason); }
+  get active() {
+    const since = performance.now() / 1000 - this.lastInteraction;
+    return this.enabled && this.holds.size === 0 && !this.interacting && since > CONFIG.idle.resumeDelay;
+  }
+  update(dt) {
+    const cfg = CONFIG.idle;
+    const goal = this.active ? 1 : 0;
+    this.weight += (goal - this.weight) * (1 - Math.exp(-cfg.blendRate * dt));
+    if (this.weight < 1e-4) return;
+
+    // Phase only advances while idling, so the ring freezes in place instead of snapping.
+    this.phase += dt * this.weight;
+    this.pivot.rotation.y += cfg.spinSpeed * dt * this.weight;
+    this.pivot.position.y = this.baseY + Math.sin(this.phase * cfg.bobSpeed) * cfg.bobAmplitude;
+    this.pivot.rotation.z = Math.sin(this.phase * cfg.bobSpeed * 0.6) * 0.035;
+  }
+}
+
+/* =====================================================================
+   INTERACTION — pointer tracking + raycaster, ready for the torch / cutter.
+   ===================================================================== */
+class Interaction {
+  constructor(camera, domElement) {
+    this.camera = camera;
+    this.dom = domElement;
+    this.raycaster = new THREE.Raycaster();
+    this.pointer = new THREE.Vector2();
+    this.pointerInside = false;
+    this.pickables = [];
+    this.hit = null;               // latest intersection (updated once per frame)
+    this.dirty = false;
+
+    domElement.addEventListener('pointermove', (e) => {
+      const r = domElement.getBoundingClientRect();
+      this.pointer.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
+      this.pointerInside = true;
+      this.dirty = true;
+    });
+    domElement.addEventListener('pointerleave', () => { this.pointerInside = false; this.hit = null; this.dom.style.cursor = ''; });
+  }
+  /** Raycast now against the pickables; returns the nearest intersection or null. */
+  pick() {
+    this.raycaster.setFromCamera(this.pointer, this.camera);
+    return this.raycaster.intersectObjects(this.pickables, false)[0] || null;
+  }
+  update() {
+    if (!this.pointerInside || !this.dirty) return;
+    this.dirty = false;                 // raycast at most once per frame
+    this.hit = this.pick();
+    this.dom.style.cursor = this.hit ? 'pointer' : '';
+  }
+}
+
+/* =====================================================================
+   UI — overlay HTML controls wired to the workshop API.
+   ===================================================================== */
+function createUI(workshop) {
+  const container = document.getElementById('metal-swatches');
+  const buttons = {};
+  for (const [key, p] of Object.entries(METAL_PRESETS)) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'swatch';
+    btn.setAttribute('aria-pressed', String(key === workshop.metals.current));
+    const hex = '#' + new THREE.Color(p.color).getHexString(THREE.SRGBColorSpace);
+    btn.innerHTML = `<span class="chip" style="background:${hex}"></span><span>${p.label}<small>${p.note}</small></span>`;
+    btn.addEventListener('click', () => workshop.setMetal(key));
+    container.appendChild(btn);
+    buttons[key] = btn;
+  }
+  workshop.onMetalChange = (key) => {
+    for (const [k, b] of Object.entries(buttons)) b.setAttribute('aria-pressed', String(k === key));
+  };
+
+  const idleToggle = document.getElementById('idle-toggle');
+  idleToggle.addEventListener('change', () => { workshop.idle.enabled = idleToggle.checked; });
+  document.getElementById('reset-shape').addEventListener('click', () => workshop.resetRing());
+  document.getElementById('reset-view').addEventListener('click', () => workshop.resetView());
+
+  const geo = workshop.ring.geometry;
+  const tris = geo.index ? geo.index.count / 3 : geo.attributes.position.count / 3;
+  document.getElementById('stats').innerHTML =
+    `Ring mesh: <b>${geo.attributes.position.count.toLocaleString()}</b> verts · <b>${tris.toLocaleString()}</b> tris`;
+}
+
+/* =====================================================================
+   BOOTSTRAP
+   ===================================================================== */
+function init() {
+  const container = document.getElementById('app');
+  const renderer = createRenderer(container);
+  const scene = createScene();
+  const camera = createCamera();
+
+  scene.environment = createStudioEnvironment(renderer);
+
+  const focus = new THREE.Vector3(0, CONFIG.ring.height, 0);
+  const lights = createLights(scene, focus);
+
+  const bench = createWorkbench(renderer);
+  scene.add(bench);
+
+  // Pivot carries idle motion; the ring mesh inside it stays at identity so
+  // its local space == its geometry space for vertex work.
+  const ringPivot = new THREE.Group();
+  ringPivot.name = 'RingPivot';
+  ringPivot.position.copy(focus);
+  const ringMaterial = createRingMaterial(DEFAULT_METAL);
+  const ring = createRing(ringMaterial);
+  ringPivot.add(ring);
+  scene.add(ringPivot);
+
+  const controls = createControls(camera, renderer.domElement, focus);
+  const idle = new IdleAnimator(ringPivot, controls);
+  const metals = new MetalSwitcher(ringMaterial, DEFAULT_METAL);
+  const interaction = new Interaction(camera, renderer.domElement);
+  interaction.pickables.push(ring);
+
+  // Public API for this and the next steps (also handy from the dev console as `workshop`).
+  const workshop = {
+    THREE, CONFIG, METAL_PRESETS,
+    renderer, scene, camera, controls, lights, bench, ring, ringPivot,
+    idle, metals, interaction,
+    systems: [],                         // push { update(dt, elapsed) } objects to hook into the loop
+    onMetalChange: null,
+    setMetal(key) { metals.set(key); this.onMetalChange && this.onMetalChange(key); },
+    resetRing() { resetRingGeometry(ring); },
+    resetView() {
+      camera.position.copy(defaultCameraPosition(camera.aspect));
+      controls.target.copy(focus);
+      controls.update();
+    },
+  };
+  workshop.systems.push(metals, idle, interaction);
+  window.workshop = workshop;
+
+  createUI(workshop);
+
+  // Resize: keep aspect correct and pick up DPR changes (e.g. dragging to another monitor).
+  const onResize = () => {
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, CONFIG.maxPixelRatio));
+    renderer.setSize(window.innerWidth, window.innerHeight);
+  };
+  window.addEventListener('resize', onResize);
+
+  // Main loop.
+  const clock = new THREE.Clock();
+  let firstFrame = true;
+  renderer.setAnimationLoop(() => {
+    const dt = Math.min(clock.getDelta(), 0.05);   // clamp so tab-switches don't cause jumps
+    const elapsed = clock.elapsedTime;
+    for (const s of workshop.systems) s.update(dt, elapsed);
+    controls.update();
+    renderer.render(scene, camera);
+    if (firstFrame) {
+      firstFrame = false;
+      window.__workshopReady = true;
+      document.body.classList.add('ready');
+    }
+  });
+}
+
+init();
+</script>
+</body>
+</html>

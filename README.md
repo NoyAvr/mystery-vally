@@ -2,7 +2,17 @@
 
 A single-file interactive mystery puzzle (Three.js + GSAP) inspired by *Monument Valley* and *Knives Out*.
 
-Open `index.html` in a browser (it loads Three.js r160, OrbitControls and GSAP from CDNs).
+Open `index.html` in a browser. It loads Three.js r160 (with OrbitControls) and GSAP 3.12.5 from the first
+source that responds: unpkg → jsDelivr (cdnjs is also tried for GSAP) → the bundled copy in `vendor/`.
+
+If your network blocks those CDNs, serve the folder over http so the `vendor/` copy can be used
+(browsers won't load it from a `file://` page):
+
+```sh
+npx serve .        # or: python3 -m http.server
+```
+
+If the page still won't open, the loading screen says why (library blocked, WebGL disabled, or a script error).
 
 ## How to play
 - Drag to turn the diorama, scroll to zoom, or use the on-screen pad / arrow keys (`R` resets).

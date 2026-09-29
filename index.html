@@ -254,6 +254,7 @@
   .loader-inner { text-align: center; }
   .loader-inner .eyebrow { font-family: 'Special Elite', monospace; letter-spacing: .3em; font-size: 12px; color: var(--gold); text-transform: uppercase; }
   .loader-inner .big { font-family: 'IM Fell English', serif; font-size: 34px; color: #f3e6c6; margin-top: 8px; }
+  .loader-inner .err code { font-size: 12px; background: rgba(255,255,255,.08); padding: 1px 5px; border-radius: 3px; }
   .loader-inner .err { margin-top: 16px; font-family: 'Special Elite', monospace; font-size: 13px; color: #e59a8a; max-width: 360px; }
 
   /* ------------------------------------------------------------------ *
@@ -371,28 +372,114 @@
   </div>
 </div>
 
-<!-- ============================ LIBRARIES ============================ -->
-<script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/gsap.min.js"></script>
-<script type="importmap">
-{
-  "imports": {
-    "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
-    "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
-  }
-}
-</script>
+<!-- ============================ LIBRARIES ============================
+     Three.js r160 (+ OrbitControls) and GSAP 3.12.5 are loaded from the first
+     source that answers: unpkg → jsDelivr → the bundled ./vendor copy (the
+     vendor copy only works when the page is served over http, e.g. `npx serve`).
+     Any failure is reported on the loading screen with its actual cause. -->
 <script>
-  // If the module never boots (CDN blocked, no WebGL) tell the player instead of hanging.
-  setTimeout(() => {
-    if (!window.__sceneReady) {
-      document.getElementById('loader-err').textContent =
-        'The study would not open. Check your connection (Three.js & GSAP load from a CDN) and that WebGL is enabled.';
+(function () {
+  const errEl = document.getElementById('loader-err');
+  const statusEl = document.querySelector('.loader .big');
+  const esc = (s) => String(s).replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+  const fail = (html) => { if (!window.__sceneReady) errEl.innerHTML = html; };
+  const status = (t) => { if (!window.__sceneReady) statusEl.textContent = t; };
+
+  window.addEventListener('error', (e) => {
+    if (e.target && e.target !== window) return;           // resource errors are handled by the loaders below
+    fail('The study would not open — a script error stopped it:<br><b>' + esc(e.message || 'unknown error') + '</b>');
+  }, true);
+  window.addEventListener('unhandledrejection', (e) => {
+    fail('The study would not open:<br><b>' + esc((e.reason && e.reason.message) || e.reason) + '</b>');
+  });
+
+  // 1. WebGL
+  const probe = document.createElement('canvas');
+  if (!(probe.getContext('webgl2') || probe.getContext('webgl'))) {
+    fail('WebGL is turned off or unavailable in this browser. Enable hardware acceleration (or try another browser) and reload.');
+    return;
+  }
+
+  const GSAP_SOURCES = [
+    'https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/gsap.min.js',
+    'https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js',
+    'https://unpkg.com/gsap@3.12.5/dist/gsap.min.js',
+    'vendor/gsap.min.js',
+  ];
+  const THREE_SOURCES = [
+    { name: 'unpkg', base: 'https://unpkg.com/three@0.160.0' },
+    { name: 'jsDelivr', base: 'https://cdn.jsdelivr.net/npm/three@0.160.0' },
+    { name: 'local vendor/ folder', base: 'vendor/three' },
+  ];
+
+  function loadScript(src, timeout) {
+    return new Promise((resolve, reject) => {
+      const s = document.createElement('script');
+      const timer = setTimeout(() => { s.remove(); reject(new Error('timeout')); }, timeout);
+      s.src = src;
+      s.onload = () => { clearTimeout(timer); resolve(); };
+      s.onerror = () => { clearTimeout(timer); s.remove(); reject(new Error('blocked')); };
+      document.head.appendChild(s);
+    });
+  }
+  async function loadGsap() {
+    for (const src of GSAP_SOURCES) {
+      try { await loadScript(src, 8000); if (window.gsap) return true; } catch (_) { /* try the next source */ }
     }
-  }, 9000);
+    return false;
+  }
+  async function reachable(url, timeout) {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), timeout);
+    try { const r = await fetch(url, { signal: ctrl.signal }); return r.ok; }
+    catch (_) { return false; }
+    finally { clearTimeout(timer); }
+  }
+  async function pickThree() {
+    for (const src of THREE_SOURCES) {
+      status('Opening the study… (' + src.name + ')');
+      if (await reachable(src.base + '/examples/jsm/controls/OrbitControls.js', 8000)) return src;
+    }
+    return null;
+  }
+
+  (async () => {
+    const [gsapOk, three] = await Promise.all([loadGsap(), pickThree()]);
+    const local = location.protocol === 'file:'
+      ? ' The bundled copy in <code>vendor/</code> can\'t load from a file:// page; serve the folder instead (for example <code>npx serve</code>) and open the http:// address.'
+      : '';
+    if (!three || !gsapOk) {
+      const missing = [!three && 'Three.js', !gsapOk && 'GSAP'].filter(Boolean).join(' and ');
+      fail('Could not load ' + missing + ' from unpkg, jsDelivr, cdnjs or the local <code>vendor/</code> folder. ' +
+        'A network filter, ad blocker or sandboxed preview may be blocking these CDNs.' + local);
+      return;
+    }
+    status('Opening the study…');
+
+    // 2. Import map pointing at whichever source answered, then start the game module.
+    const base = new URL(three.base, location.href).href;   // import maps need absolute or ./-style URLs
+    const map = document.createElement('script');
+    map.type = 'importmap';
+    map.textContent = JSON.stringify({ imports: {
+      'three': base + '/build/three.module.js',
+      'three/addons/': base + '/examples/jsm/',
+    } });
+    document.head.appendChild(map);
+
+    const game = document.createElement('script');
+    game.type = 'module';
+    game.textContent = document.getElementById('game-src').textContent;
+    document.body.appendChild(game);
+
+    setTimeout(() => fail('The study is taking too long to open. Three.js came from ' + three.name +
+      ' but the scene never rendered. Try reloading.'), 25000);
+  })();
+})();
 </script>
 
-<!-- ============================ GAME ============================ -->
-<script type="module">
+<!-- ============================ GAME ============================
+     Kept as text and started by the loader above, once the libraries are in. -->
+<script type="text/plain" id="game-src">
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
